@@ -1,0 +1,37 @@
+
+export interface RootItem {
+  part: string;
+  meaning: string;
+}
+
+export interface WordData {
+  id: string; // unique ID for React keys
+  word: string;
+  phonetic: string;
+  meaning: string;
+  roots: RootItem[];
+  // Story and Image are loaded lazily
+  story?: string;
+  imageUrl?: string;
+  storyAudioBase64?: string; // New field for caching story audio
+  isLoadingDetails?: boolean;
+}
+
+export interface GeneratedContent {
+  story: string;
+  imageBase64: string;
+}
+
+export interface AppSettings {
+  useLocal: boolean;
+  localBaseUrl: string;
+  localModel: string;
+  // Custom Gemini Config
+  useCustomGemini: boolean;
+  geminiApiKey: string;
+}
+
+export interface LocalModel {
+  id: string;
+  object: string;
+}

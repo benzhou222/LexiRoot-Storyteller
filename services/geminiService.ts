@@ -186,6 +186,88 @@ export const generateWords = async (historyWords: string[], settings?: AppSettin
 };
 
 /**
+ * Generates 3 complex words containing a specific root.
+ */
+export const generateWordsByRoot = async (root: string, settings?: AppSettings): Promise<Omit<WordData, 'id'>[]> => {
+  const promptText = `
+    Generate 3 distinct, complex, advanced English words (GRE/SAT/C1/C2 level) that contain the etymological root "${root}".
+    For each word, provide:
+    1. The word itself (English).
+    2. Its IPA phonetic transcription.
+    3. A concise definition in Chinese (Simplified).
+    4. A detailed breakdown of its etymological roots (prefix/root/suffix), where the root part is in English/Latin/Greek but its meaning is in Chinese (Simplified).
+  `;
+
+  // Branch: Local LLM
+  if (settings?.useLocal && settings.localBaseUrl && settings.localModel) {
+    const localPrompt = `${promptText}
+    
+    IMPORTANT: You must output ONLY a valid JSON array. Do not add any conversational text.
+    The JSON structure must be exactly:
+    [
+      {
+        "word": "example",
+        "phonetic": "/.../",
+        "meaning": "chinese meaning",
+        "roots": [
+          { "part": "ex-", "meaning": "out (chinese)" },
+          { "part": "ample", "meaning": "large (chinese)" }
+        ]
+      }
+    ]
+    `;
+    
+    const rawText = await generateLocalText(settings.localBaseUrl, settings.localModel, localPrompt, 0.8);
+    try {
+      const jsonText = cleanJsonBlock(rawText);
+      return JSON.parse(jsonText);
+    } catch (e) {
+      console.error("Failed to parse Local LLM JSON for root words", rawText);
+      throw new Error("Local LLM did not return valid JSON. Try again.");
+    }
+  }
+
+  // Branch: Gemini API
+  const ai = getAiClient(settings);
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: promptText,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            word: { type: Type.STRING },
+            phonetic: { type: Type.STRING, description: "IPA format" },
+            meaning: { type: Type.STRING, description: "Meaning in Chinese" },
+            roots: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  part: { type: Type.STRING, description: "The root part, e.g., 'bene-'" },
+                  meaning: { type: Type.STRING, description: "Meaning of the part in Chinese" }
+                },
+                required: ["part", "meaning"]
+              }
+            }
+          },
+          required: ["word", "phonetic", "meaning", "roots"]
+        }
+      }
+    }
+  });
+
+  const text = response.text;
+  if (!text) throw new Error("No data returned from Gemini");
+  
+  return JSON.parse(text);
+};
+
+
+/**
  * Generates data for a specific single word requested by the user.
  */
 export const generateSingleWord = async (targetWord: string, settings?: AppSettings): Promise<Omit<WordData, 'id'>> => {
@@ -336,68 +418,64 @@ export const generateStoryAudio = async (text: string, settings?: AppSettings): 
 };
 
 /**
- * Generates a humorous story and an image for a specific word.
+ * Generates a humorous story and an illustration for the word.
  * Uses Local LLM for story if configured, but always uses Gemini for Image.
  */
 export const generateWordDetails = async (wordData: WordData, settings?: AppSettings): Promise<GeneratedContent> => {
-  // 1. Generate Story
   const storyPrompt = `
-    Write a short, humorous, and memorable story in Chinese (Simplified) (max 150 words) that explains the English word "${wordData.word}" (Meaning: ${wordData.meaning}).
+    Write a humorous short story in Simplified Chinese (max 150 words) that explains the English word "${wordData.word}" (Meaning: ${wordData.meaning}).
     The story MUST creatively weave in the meanings of its roots: ${wordData.roots.map(r => `${r.part} (${r.meaning})`).join(', ')}.
-    Make it funny to help with memorization.
+
+    FORMATTING RULES:
+    1. The story must flow naturally in Chinese.
+    2. When incorporating the English word or its roots, DO NOT insert the English word directly into the sentence structure in a way that breaks Chinese grammar.
+    3. Instead, write the **Chinese meaning** as part of the sentence flow, followed immediately by the English term in parentheses.
+    4. **CRITICAL**: Inside the parentheses, REPEAT the English term TWICE, separated by a comma. This is for memory reinforcement.
+    
+    Examples:
+    - Bad: 他的脑中正在进行一场 "agon" (斗争)。 (English word breaks flow)
+    - Good: 他的脑中正在进行一场斗争 (agon, agon)。 (Chinese meaning flows, English is repeated)
+    - Bad: 厨师正在 "agonize" (发愁)。
+    - Good: 厨师正在发愁 (agonize, agonize)。
+
+    The tone should be engaging and memorable.
   `;
 
   const ai = getAiClient(settings);
-
-  let story = "";
+  let storyText = "";
   
-  // Start Story Gen
-  const storyPromise = (async () => {
-    if (settings?.useLocal && settings.localBaseUrl && settings.localModel) {
-      return await generateLocalText(settings.localBaseUrl, settings.localModel, storyPrompt, 0.8);
-    } else {
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: storyPrompt,
-      });
-      return res.text || "Could not generate story.";
-    }
-  })();
+  // 1. Generate Story
+  if (settings?.useLocal && settings.localBaseUrl && settings.localModel) {
+    storyText = await generateLocalText(settings.localBaseUrl, settings.localModel, storyPrompt, 0.8);
+  } else {
+    const res = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: storyPrompt,
+    });
+    storyText = res.text || "Story generation failed.";
+  }
 
   // 2. Generate Image (Gemini only)
-  // Image generation always uses Gemini, so we use the configured Gemini client
-  const imagePrompt = `A humorous, cartoon-style illustration depicting the literal or metaphorical meaning of the word "${wordData.word}": ${wordData.meaning}. Colorful, clean lines.`;
+  const imagePrompt = `A humorous, cartoon-style illustration for a story about the word "${wordData.word}": ${storyText.slice(0, 300)}. Colorful, clean lines.`;
   
-  const imagePromise = ai.models.generateContent({
+  const imageRes = await ai.models.generateContent({
     model: "gemini-2.5-flash-image",
     contents: imagePrompt,
   });
 
-  // Execute in parallel
-  const [storyText, imageRes] = await Promise.allSettled([storyPromise, imagePromise]);
-
-  if (storyText.status === 'fulfilled') {
-    story = storyText.value;
-  } else {
-    story = "Story generation failed.";
-  }
-
-  // Process Image
   let imageBase64 = "";
-  if (imageRes.status === 'fulfilled' && imageRes.value) {
-    const parts = imageRes.value.candidates?.[0]?.content?.parts;
-    if (parts) {
-      for (const part of parts) {
-          if (part.inlineData) {
-              imageBase64 = part.inlineData.data;
-              break;
-          }
+  const parts = imageRes.candidates?.[0]?.content?.parts;
+  if (parts) {
+    for (const part of parts) {
+      if (part.inlineData) {
+        imageBase64 = part.inlineData.data;
+        break;
       }
     }
   }
 
   return {
-    story,
-    imageBase64
+    story: storyText,
+    imageBase64: imageBase64
   };
 };

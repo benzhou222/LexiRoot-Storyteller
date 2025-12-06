@@ -10,9 +10,10 @@ export interface WordData {
   phonetic: string;
   meaning: string;
   roots: RootItem[];
-  // Story and Image are loaded lazily
+  
   story?: string;
-  imageUrl?: string;
+  imageUrl?: string; 
+  
   storyAudioBase64?: string; // New field for caching story audio
   isLoadingDetails?: boolean;
 }

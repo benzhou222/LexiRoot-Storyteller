@@ -1,10 +1,11 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { generateWords, generateWordDetails, generateSingleWord } from './services/geminiService';
+import { generateWords, generateWordDetails, generateSingleWord, generateWordsByRoot } from './services/geminiService';
 import { WordData, AppSettings } from './types';
 import { WordCard } from './components/WordCard';
 import { DetailModal } from './components/DetailModal';
 import { HistorySidebar } from './components/HistorySidebar';
+import { RootSidebar } from './components/RootSidebar';
 import { SettingsModal } from './components/SettingsModal';
 
 // Unique ID generator
@@ -27,6 +28,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Sidebar Tab State
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'history' | 'roots'>('history');
+
   // Settings State
   const [settings, setSettings] = useState<AppSettings>(() => {
     if (typeof window !== 'undefined') {
@@ -108,6 +112,30 @@ export default function App() {
     }
   }, [history, loading, settings]);
 
+  const handleRootSelect = useCallback(async (root: string) => {
+    if (loading) return;
+    setLoading(true);
+    // Close mobile sidebar if open
+    setIsSidebarOpen(false);
+
+    try {
+        const newRawWords = await generateWordsByRoot(root, settings);
+        
+        const newWords: WordData[] = newRawWords.map(w => ({
+            ...w,
+            id: generateId(),
+            isLoadingDetails: false
+        }));
+
+        setCurrentWords(newWords);
+    } catch (error) {
+        console.error("Failed to generate words by root", error);
+        alert(`Could not find words for root "${root}".`);
+    } finally {
+        setLoading(false);
+    }
+  }, [loading, settings]);
+
   const handleSearch = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!searchQuery.trim() || loading) return;
@@ -123,9 +151,6 @@ export default function App() {
             isLoadingDetails: false
         };
 
-        // Update current words to show just this search result (or prepend it)
-        // Let's prepend it so the user sees it immediately, and keep others if desired.
-        // Or simply set it as the single item in view to focus on the search result.
         setCurrentWords([newWord]);
         setSearchQuery(''); // Clear search
     } catch (error) {
@@ -197,27 +222,60 @@ export default function App() {
   const selectedWord = history.find(w => w.id === selectedWordId);
   const displayWords = currentWords.map(cw => history.find(h => h.id === cw.id) || cw);
 
+  // Reusable sidebar container
+  const SidebarContent = () => (
+    <div className="h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col w-full md:w-64 lg:w-72 shrink-0 transition-colors duration-300">
+        <div className="flex border-b border-slate-200 dark:border-slate-800">
+            <button 
+                onClick={() => setActiveSidebarTab('history')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                    activeSidebarTab === 'history' 
+                    ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400' 
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+            >
+                History
+            </button>
+            <button 
+                onClick={() => setActiveSidebarTab('roots')}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${
+                    activeSidebarTab === 'roots' 
+                    ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400' 
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                }`}
+            >
+                Roots
+            </button>
+        </div>
+
+        {activeSidebarTab === 'history' ? (
+            <HistorySidebar 
+                history={history} 
+                onSelect={(id) => { handleCardClick(id); if (window.innerWidth < 768) setIsSidebarOpen(false); }} 
+                currentIds={currentWords.map(w => w.id)} 
+            />
+        ) : (
+            <RootSidebar 
+                onSelectRoot={handleRootSelect}
+                isLoading={loading}
+            />
+        )}
+    </div>
+  );
+
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 overflow-hidden transition-colors duration-300">
       {/* Sidebar - Desktop */}
       <div className="hidden md:block h-full shadow-lg z-10">
-        <HistorySidebar 
-            history={history} 
-            onSelect={handleCardClick} 
-            currentIds={currentWords.map(w => w.id)} 
-        />
+        <SidebarContent />
       </div>
 
       {/* Sidebar - Mobile Overlay */}
       {isSidebarOpen && (
         <div className="fixed inset-0 z-40 md:hidden">
             <div className="absolute inset-0 bg-black/50" onClick={() => setIsSidebarOpen(false)} />
-            <div className="absolute inset-y-0 left-0 w-64 bg-white dark:bg-slate-900 z-50 animate-in slide-in-from-left duration-200">
-                <HistorySidebar 
-                    history={history} 
-                    onSelect={(id) => { handleCardClick(id); setIsSidebarOpen(false); }} 
-                    currentIds={currentWords.map(w => w.id)} 
-                />
+            <div className="absolute inset-y-0 left-0 w-64 bg-white dark:bg-slate-900 z-50 animate-in slide-in-from-left duration-200 shadow-2xl">
+                <SidebarContent />
             </div>
         </div>
       )}
@@ -275,40 +333,42 @@ export default function App() {
           
           {/* Group 3: Search Bar (Order 3 on Mobile [new line], Order 2 on Desktop) */}
           <div className="w-full md:flex-1 max-w-xl mx-auto md:px-6 order-3 md:order-2">
-             <form onSubmit={handleSearch} className="relative group">
-                {isSearching ? (
-                  <div className="absolute inset-0 z-10 bg-slate-50 dark:bg-slate-800 rounded-full border border-indigo-500 flex items-center pl-4 shadow-sm">
-                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      <span className="text-indigo-600 dark:text-indigo-400 text-sm font-medium">Creating card...</span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400 group-focus-within:text-indigo-500 transition-colors">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-                        </svg>
-                    </div>
-                    <input 
-                        type="text" 
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search any English word..."
-                        className="block w-full rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 py-2.5 pl-10 pr-12 text-sm leading-5 text-slate-900 dark:text-white placeholder-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition-all shadow-sm"
-                    />
-                    <button 
-                        type="submit"
-                        disabled={!searchQuery.trim() || loading}
-                        className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
-                            <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clipRule="evenodd" />
-                        </svg>
-                    </button>
-                  </>
-                )}
+             <form onSubmit={handleSearch} className="relative group w-full">
+                <div className={`absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none transition-colors ${isSearching ? 'text-indigo-500' : 'text-slate-400 group-focus-within:text-indigo-500'}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                    </svg>
+                </div>
+                <input 
+                    type="text" 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    disabled={isSearching}
+                    placeholder={isSearching ? "Creating word card..." : "Search any English word..."}
+                    className={`block w-full rounded-full border py-2.5 pl-10 pr-12 text-sm leading-5 outline-none transition-all shadow-sm ${
+                        isSearching 
+                        ? 'border-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 placeholder-indigo-400/70' 
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'
+                    }`}
+                />
+                <div className="absolute inset-y-0 right-0 flex items-center pr-2">
+                    {isSearching ? (
+                         <svg className="animate-spin h-5 w-5 text-indigo-500 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                         </svg>
+                    ) : (
+                        <button 
+                            type="submit"
+                            disabled={!searchQuery.trim() || loading}
+                            className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+                                <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
              </form>
           </div>
         </header>

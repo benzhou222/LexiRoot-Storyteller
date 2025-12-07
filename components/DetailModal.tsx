@@ -9,9 +9,10 @@ interface DetailModalProps {
   settings: AppSettings;
   onClose: () => void;
   onUpdateWord: (id: string, updates: Partial<WordData>) => void;
+  isOnline: boolean;
 }
 
-export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, onClose, onUpdateWord }) => {
+export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, onClose, onUpdateWord, isOnline }) => {
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [isPlayingWord, setIsPlayingWord] = useState(false);
   const [isDownloadingWord, setIsDownloadingWord] = useState(false);
@@ -46,6 +47,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
 
   const fetchPronunciationIfNeeded = async (): Promise<string | null> => {
     if (pronunciationBase64) return pronunciationBase64;
+    if (!isOnline) {
+        alert("Internet connection required.");
+        return null;
+    }
     try {
         const base64 = await generatePronunciation(wordData.word, settings);
         setPronunciationBase64(base64);
@@ -58,6 +63,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
 
   const handlePlayWord = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!isOnline) {
+        alert("Internet connection required.");
+        return;
+    }
     if (isPlayingWord) return;
     
     setIsPlayingWord(true);
@@ -70,6 +79,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
 
   const handleDownloadPronunciation = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!isOnline) {
+        alert("Internet connection required.");
+        return;
+    }
     if (isDownloadingWord) return;
 
     setIsDownloadingWord(true);
@@ -88,6 +101,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
   };
 
   const handleGenerateAudio = async () => {
+    if (!isOnline) {
+        alert("Internet connection required to generate audio.");
+        return;
+    }
     if (!storyText) return;
 
     setIsGeneratingAudio(true);
@@ -135,8 +152,13 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
               <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                 <button
                     onClick={handlePlayWord}
-                    className={`flex items-center gap-2 px-2 py-1 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors rounded ${isPlayingWord ? 'text-indigo-600 dark:text-indigo-400 animate-pulse' : ''}`}
-                    title="Play pronunciation"
+                    disabled={!isOnline}
+                    className={`flex items-center gap-2 px-2 py-1 transition-colors rounded ${
+                        !isOnline 
+                        ? 'text-slate-400 cursor-not-allowed opacity-50' 
+                        : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'
+                    } ${isPlayingWord ? 'text-indigo-600 dark:text-indigo-400 animate-pulse' : ''}`}
+                    title={isOnline ? "Play pronunciation" : "Online connection required"}
                 >
                     <span className="font-mono text-lg">/{wordData.phonetic}/</span>
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
@@ -147,9 +169,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                 <div className="w-px h-5 bg-slate-300 dark:bg-slate-600 mx-1"></div>
                 <button
                   onClick={handleDownloadPronunciation}
-                  disabled={isDownloadingWord}
+                  disabled={isDownloadingWord || !isOnline}
                   className="p-1.5 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors rounded disabled:opacity-50"
-                  title="Download Pronunciation"
+                  title={isOnline ? "Download Pronunciation" : "Online connection required"}
                 >
                   {isDownloadingWord ? (
                     <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -181,10 +203,20 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
           
           {/* Loading State or Content */}
           {wordData.isLoadingDetails ? (
-            <div className="flex flex-col items-center justify-center py-20 space-y-4">
-              <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 dark:border-indigo-900 dark:border-t-indigo-500 rounded-full animate-spin"></div>
-              <p className="text-slate-500 dark:text-slate-400 animate-pulse">Weaving a story and painting a scene...</p>
-            </div>
+             isOnline ? (
+                <div className="flex flex-col items-center justify-center py-20 space-y-4">
+                  <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 dark:border-indigo-900 dark:border-t-indigo-500 rounded-full animate-spin"></div>
+                  <p className="text-slate-500 dark:text-slate-400 animate-pulse">Weaving a story and painting a scene...</p>
+                </div>
+             ) : (
+                <div className="flex flex-col items-center justify-center py-20 space-y-4 text-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-amber-500 mb-2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M12 18.75a9.75 9.75 0 005.982-2.106m.335-9.362A9.719 9.719 0 0012 5.25c-5.385 0-9.75 4.365-9.75 9.75 0 1.25.24 2.446.685 3.55" />
+                    </svg>
+                    <p className="text-slate-600 dark:text-slate-300 font-medium">Connection Lost</p>
+                    <p className="text-slate-400 dark:text-slate-500 text-sm">Cannot generate story details while offline.</p>
+                </div>
+             )
           ) : (
             <>
               {/* Roots Recap */}
@@ -207,8 +239,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                            />
                         ) : (
-                           <div className="w-full h-full flex items-center justify-center text-slate-400 dark:text-slate-600">
-                               <span className="text-sm">Image unavailable</span>
+                           <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 p-4 text-center">
+                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 mb-2 opacity-50">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                               </svg>
+                               <span className="text-sm">{wordData.story ? "Image unavailable" : (isOnline ? "Generating..." : "Image not generated")}</span>
                            </div>
                         )}
                     </div>
@@ -218,13 +253,19 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                  <div className="w-full md:w-1/2 space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-100">
                     <div className="bg-indigo-50/50 dark:bg-indigo-900/10 p-6 rounded-2xl border border-indigo-100 dark:border-indigo-800/30">
                         <h3 className="text-sm font-bold text-indigo-400 dark:text-indigo-400 uppercase tracking-widest mb-4">Story</h3>
-                        <textarea
-                            value={storyText}
-                            onChange={(e) => setStoryText(e.target.value)}
-                            onBlur={handleStoryBlur}
-                            className="w-full min-h-[300px] bg-transparent serif text-slate-700 dark:text-slate-200 leading-8 text-lg border-0 focus:ring-0 resize-none p-0 outline-none placeholder-slate-400"
-                            spellCheck={false}
-                        />
+                        {wordData.story ? (
+                            <textarea
+                                value={storyText}
+                                onChange={(e) => setStoryText(e.target.value)}
+                                onBlur={handleStoryBlur}
+                                className="w-full min-h-[300px] bg-transparent serif text-slate-700 dark:text-slate-200 leading-8 text-lg border-0 focus:ring-0 resize-none p-0 outline-none placeholder-slate-400"
+                                spellCheck={false}
+                            />
+                        ) : (
+                            <div className="min-h-[300px] flex items-center justify-center text-slate-400 italic">
+                                {isOnline ? "Story not available" : "Connect to internet to generate story"}
+                            </div>
+                        )}
                     </div>
                     
                     {/* Audio Controls */}
@@ -239,9 +280,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                                />
                                <button
                                   onClick={handleGenerateAudio}
-                                  disabled={isGeneratingAudio}
+                                  disabled={isGeneratingAudio || !isOnline}
                                   className="p-2 text-indigo-600 dark:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-full transition-colors disabled:opacity-50"
-                                  title="Regenerate Audio"
+                                  title={isOnline ? "Regenerate Audio" : "Online required"}
                                >
                                     {isGeneratingAudio ? (
                                         <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -267,8 +308,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                         ) : (
                            <button
                               onClick={handleGenerateAudio}
-                              disabled={isGeneratingAudio}
-                              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors shadow-lg shadow-indigo-500/30 disabled:opacity-70 disabled:cursor-wait"
+                              disabled={isGeneratingAudio || !storyText || !isOnline}
+                              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors shadow-lg shadow-indigo-500/30 disabled:opacity-70 disabled:cursor-not-allowed disabled:bg-slate-400"
+                              title={!isOnline ? "Online connection required" : "Generate Audio"}
                            >
                                 {isGeneratingAudio ? (
                                     <>
@@ -283,7 +325,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({ wordData, settings, on
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
                                         </svg>
-                                        <span>Read Aloud</span>
+                                        <span>{!isOnline ? 'Offline' : 'Read Aloud'}</span>
                                     </>
                                 )}
                            </button>

@@ -30,6 +30,11 @@ export interface AppSettings {
   // Custom Gemini Config
   useCustomGemini: boolean;
   geminiApiKey: string;
+  // Local TTS Config
+  useLocalTTS: boolean;
+  localTTSUrl: string;
+  localTTSModel: string;
+  localTTSVoice: string;
 }
 
 export interface LocalModel {

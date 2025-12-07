@@ -64,6 +64,19 @@ const generateLocalText = async (
   return data.choices?.[0]?.message?.content || "";
 };
 
+const repairJson = (jsonString: string): string => {
+  let fixed = jsonString;
+
+  // 1. Fix unquoted phonetic regex patterns: "phonetic": /.../ -> "phonetic": "/.../"
+  // Many local models output JS-style regex literals for IPA.
+  fixed = fixed.replace(/"phonetic":\s*\/([^\/]+)\//g, '"phonetic": "/$1/"');
+
+  // 2. Fix trailing commas (e.g., [a, b,] -> [a, b])
+  fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
+
+  return fixed;
+};
+
 const cleanJsonBlock = (text: string): string => {
   // Remove markdown code blocks if present
   let clean = text.trim();
@@ -97,7 +110,48 @@ const cleanJsonBlock = (text: string): string => {
     clean = clean.substring(start, end + 1);
   }
   
-  return clean.trim();
+  return repairJson(clean.trim());
+};
+
+// --- Local TTS Helper ---
+
+const generateLocalAudio = async (text: string, settings: AppSettings): Promise<string> => {
+  const url = settings.localTTSUrl || 'http://localhost:5000/v1/audio/speech';
+  const model = settings.localTTSModel || 'tts-1';
+  const voice = settings.localTTSVoice || 'alloy';
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: model,
+      input: text,
+      voice: voice,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Local TTS Error: ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  // Convert ArrayBuffer to Base64
+  let binary = '';
+  const bytes = new Uint8Array(arrayBuffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
+export const testLocalTTS = async (settings: AppSettings): Promise<void> => {
+    // Generate a simple test word
+    const base64 = await generateLocalAudio("Hello, audio test.", settings);
+    // Attempt to play it
+    await playAudioData(base64);
 };
 
 // --- Main Service Functions ---
@@ -122,6 +176,7 @@ export const generateWords = async (historyWords: string[], settings?: AppSettin
     const localPrompt = `${promptText}
     
     IMPORTANT: You must output ONLY a valid JSON array. Do not add any conversational text.
+    The "phonetic" field must be a STRING, not a regex.
     The JSON structure must be exactly:
     [
       {
@@ -203,6 +258,7 @@ export const generateWordsByRoot = async (root: string, settings?: AppSettings):
     const localPrompt = `${promptText}
     
     IMPORTANT: You must output ONLY a valid JSON array. Do not add any conversational text.
+    The "phonetic" field must be a STRING, not a regex.
     The JSON structure must be exactly:
     [
       {
@@ -285,6 +341,7 @@ export const generateSingleWord = async (targetWord: string, settings?: AppSetti
     const localPrompt = `${promptText}
     
     IMPORTANT: You must output ONLY a valid JSON object. Do not add any conversational text.
+    The "phonetic" field must be a STRING, not a regex.
     The JSON structure must be exactly:
     {
       "word": "Example",
@@ -349,6 +406,12 @@ export const generateSingleWord = async (targetWord: string, settings?: AppSetti
  */
 export const generatePronunciation = async (word: string, settings?: AppSettings): Promise<string> => {
   try {
+    // 1. Local TTS Override
+    if (settings?.useLocalTTS && settings.localTTSUrl) {
+        return await generateLocalAudio(`Say the word: ${word}`, settings);
+    }
+
+    // 2. Gemini API
     const ai = getAiClient(settings);
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -391,12 +454,16 @@ export const playWordPronunciation = async (word: string, settings?: AppSettings
  */
 export const generateStoryAudio = async (text: string, settings?: AppSettings): Promise<string> => {
   try {
+    // 1. Local TTS Override
+    if (settings?.useLocalTTS && settings.localTTSUrl) {
+        return await generateLocalAudio(text, settings);
+    }
+
+    // 2. Gemini API
     const ai = getAiClient(settings);
-    // Use Fenrir or Puck for a slightly more character-driven voice, or Kore for neutrality.
-    // 'Fenrir' often has a deeper, more storytelling quality.
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: `Read the following story with rich emotion and theatrical expression:\n\n${text}`,
+      contents: `Read the following story with rich emotion and theatrical expression. IMPORTANT: You must read the English words inside the parentheses out loud clearly as part of the story.\n\n${text}`,
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -423,14 +490,18 @@ export const generateStoryAudio = async (text: string, settings?: AppSettings): 
  */
 export const generateWordDetails = async (wordData: WordData, settings?: AppSettings): Promise<GeneratedContent> => {
   const storyPrompt = `
-    Write a humorous short story in Simplified Chinese (max 150 words) that explains the English word "${wordData.word}" (Meaning: ${wordData.meaning}).
+    Write a short story in Simplified Chinese (max 150 words) that explains the English word "${wordData.word}" (Meaning: ${wordData.meaning}).
     The story MUST creatively weave in the meanings of its roots: ${wordData.roots.map(r => `${r.part} (${r.meaning})`).join(', ')}.
 
-    FORMATTING RULES:
+    NARRATIVE STYLE:
+    1. Blend HUMOR with PHILOSOPHICAL INSIGHT.
+    2. The story should recount a specific event, but end with a brief, witty, or profound reflection on life, human nature, or the universe, related to the word.
+
+    FORMATTING RULES (CRITICAL):
     1. The story must flow naturally in Chinese.
     2. When incorporating the English word or its roots, DO NOT insert the English word directly into the sentence structure in a way that breaks Chinese grammar.
     3. Instead, write the **Chinese meaning** as part of the sentence flow, followed immediately by the English term in parentheses.
-    4. **CRITICAL**: Inside the parentheses, REPEAT the English term TWICE, separated by a comma. This is for memory reinforcement.
+    4. **Inside the parentheses, REPEAT the English term TWICE, separated by a comma.**
     
     Examples:
     - Bad: 他的脑中正在进行一场 "agon" (斗争)。 (English word breaks flow)
@@ -438,7 +509,7 @@ export const generateWordDetails = async (wordData: WordData, settings?: AppSett
     - Bad: 厨师正在 "agonize" (发愁)。
     - Good: 厨师正在发愁 (agonize, agonize)。
 
-    The tone should be engaging and memorable.
+    Tone: Witty, insightful, and memorable.
   `;
 
   const ai = getAiClient(settings);

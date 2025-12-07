@@ -1,3 +1,4 @@
+
 export const decodeBase64 = (base64: string): Uint8Array => {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -8,6 +9,22 @@ export const decodeBase64 = (base64: string): Uint8Array => {
   return bytes;
 };
 
+// Check for common audio headers to distinguish File vs Raw PCM
+const hasAudioHeader = (bytes: Uint8Array): boolean => {
+  if (bytes.length < 4) return false;
+  
+  // RIFF (WAV)
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return true;
+  // ID3 (MP3)
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return true;
+  // OggS (Ogg)
+  if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return true;
+  // MP3 Sync Frame (Approx check: FF FB or FF F3 etc)
+  if (bytes.length > 1 && bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) return true;
+
+  return false;
+};
+
 export const playAudioData = async (
   base64Audio: string,
   sampleRate: number = 24000
@@ -16,12 +33,29 @@ export const playAudioData = async (
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const audioContext = new AudioContextClass({ sampleRate });
     
-    const arrayBuffer = decodeBase64(base64Audio).buffer;
-    
-    // Create an Int16Array view of the data (PCM 16-bit)
+    const bytes = decodeBase64(base64Audio);
+
+    // 1. Try to decode as standard audio file (MP3/WAV/etc)
+    try {
+        // decodeAudioData detaches the buffer, so we use a copy to be safe if we need to fallback (though fallback is for raw)
+        const bufferCopy = bytes.slice(0).buffer; 
+        const audioBuffer = await audioContext.decodeAudioData(bufferCopy);
+        
+        // If successful, play it
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContext.destination);
+        source.start();
+        source.onended = () => audioContext.close();
+        return;
+    } catch (e) {
+        // Decoding failed, assume Raw PCM (Gemini format)
+        // Proceed to manual PCM decoding below
+    }
+
+    // 2. Fallback: Manual Raw PCM Decoding (Gemini)
+    const arrayBuffer = bytes.buffer;
     const dataInt16 = new Int16Array(arrayBuffer);
-    
-    // Create an AudioBuffer
     const audioBuffer = audioContext.createBuffer(1, dataInt16.length, sampleRate);
     const channelData = audioBuffer.getChannelData(0);
     
@@ -34,10 +68,6 @@ export const playAudioData = async (
     source.buffer = audioBuffer;
     source.connect(audioContext.destination);
     source.start();
-    
-    // Automatically close context after playback to save resources, 
-    // strictly speaking we might want to keep one context open globally, 
-    // but for occasional clicks, this is safer for clean up.
     source.onended = () => {
       audioContext.close();
     };
@@ -49,15 +79,19 @@ export const playAudioData = async (
 export const downloadAudio = (base64Audio: string, filename: string) => {
   try {
     const bytes = decodeBase64(base64Audio);
-    // Note: The raw output from Gemini TTS is PCM. 
-    // Browsers don't support playing/downloading raw PCM in <audio> tags or as simple .wav downloads 
-    // without a WAV header.
-    // For a robust download, we should add a simple WAV header.
     
-    const wavBytes = addWavHeader(bytes, 24000, 1);
-    const blob = new Blob([wavBytes], { type: 'audio/wav' });
+    let blob: Blob;
+    // If it has a header, it's already a valid file (e.g. from Local TTS)
+    if (hasAudioHeader(bytes)) {
+        // Attempt to determine type or default to octet-stream/wav
+        blob = new Blob([bytes], { type: 'audio/wav' }); 
+    } else {
+        // Raw PCM (Gemini), add WAV header
+        const wavBytes = addWavHeader(bytes, 24000, 1);
+        blob = new Blob([wavBytes], { type: 'audio/wav' });
+    }
+
     const url = URL.createObjectURL(blob);
-    
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
@@ -75,8 +109,17 @@ export const downloadAudio = (base64Audio: string, filename: string) => {
  */
 export const createAudioUrl = (base64Audio: string): string => {
   const bytes = decodeBase64(base64Audio);
-  const wavBytes = addWavHeader(bytes, 24000, 1);
-  const blob = new Blob([wavBytes], { type: 'audio/wav' });
+  let blob: Blob;
+  
+  if (hasAudioHeader(bytes)) {
+      // It's a file, just use it
+      blob = new Blob([bytes], { type: 'audio/wav' });
+  } else {
+      // It's raw PCM, add header
+      const wavBytes = addWavHeader(bytes, 24000, 1);
+      blob = new Blob([wavBytes], { type: 'audio/wav' });
+  }
+  
   return URL.createObjectURL(blob);
 }
 

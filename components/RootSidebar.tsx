@@ -1,29 +1,34 @@
 
 import React, { useMemo, useRef } from 'react';
-import { COMMON_ROOTS, CommonRoot } from '../services/rootData';
+import { CommonRoot } from '../services/rootData';
 
 interface RootSidebarProps {
+  roots: CommonRoot[];
   onSelectRoot: (root: string) => void;
   isLoading: boolean;
 }
 
-export const RootSidebar: React.FC<RootSidebarProps> = ({ onSelectRoot, isLoading }) => {
+export const RootSidebar: React.FC<RootSidebarProps> = ({ roots, onSelectRoot, isLoading }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Sort roots alphabetically
   const sortedRoots = useMemo(() => {
-    return [...COMMON_ROOTS].sort((a, b) => a.root.localeCompare(b.root));
-  }, []);
+    return [...roots].sort((a, b) => a.root.localeCompare(b.root));
+  }, [roots]);
 
   // Group roots by first letter
   const groupedRoots = useMemo(() => {
     const groups: Record<string, CommonRoot[]> = {};
     sortedRoots.forEach(item => {
-      const firstLetter = item.root.charAt(0).toUpperCase();
-      if (!groups[firstLetter]) {
-        groups[firstLetter] = [];
+      const firstChar = item.root.charAt(0).toUpperCase();
+      // Group non-alpha characters under '#' or similar if needed, 
+      // but assuming mostly english letters here.
+      const letter = /^[A-Z]$/.test(firstChar) ? firstChar : '#';
+      
+      if (!groups[letter]) {
+        groups[letter] = [];
       }
-      groups[firstLetter].push(item);
+      groups[letter].push(item);
     });
     return groups;
   }, [sortedRoots]);
@@ -35,12 +40,9 @@ export const RootSidebar: React.FC<RootSidebarProps> = ({ onSelectRoot, isLoadin
     if (!container) return;
 
     // Find the section specifically inside this container instance
-    // This avoids conflicts if multiple sidebars exist in the DOM (e.g. mobile vs desktop views)
     const section = container.querySelector(`[data-letter="${letter}"]`) as HTMLElement;
     
     if (section) {
-      // Calculate position relative to the container's visible area
-      // offsetTop is unreliable with nested positioning, so we use coordinate geometry
       const containerRect = container.getBoundingClientRect();
       const sectionRect = section.getBoundingClientRect();
       
